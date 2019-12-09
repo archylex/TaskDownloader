@@ -4,5 +4,3 @@ This program allows to download tasks in the form of executable files from remot
 
 * mirrors.list - remote server list (the file is updated after each program start)
 * task.file - the file contains the name of the executable file on the server (task) and MD5 hash
-
-***Enter must be pressed after each line.***
