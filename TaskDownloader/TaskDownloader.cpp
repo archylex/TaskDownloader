@@ -107,9 +107,13 @@ bool onLoadFile(const char* u_name, const char* f_name) {
 
 	if (errFile == 0) {
 		while (fgets(line, BUFFER_SIZE, file)) {
-			line[strlen(line) - 1] = '\0';
+			if (!feof(file))
+				line[strlen(line) - 1] = '\0';
+
 			strncat_s(line, u_name, BUFFER_SIZE - strlen(line) - 1);
-			printf("%s \n", line);
+			
+			printf("*** Try to download from %s \n", line);
+			
 			if (onDownload(line, f_name)) {
 				fclose(file);
 				return true;
@@ -118,6 +122,9 @@ bool onLoadFile(const char* u_name, const char* f_name) {
 
 		fclose(file);
 
+		return false;
+	} else {
+		printf("*** The file 'mirrors.list' doesn't open.\n");
 		return false;
 	}
 }
@@ -132,7 +139,7 @@ void onUpdateMirrors() {
 	}
 }
 
-char* onLoadTask() {
+char* onLoadTask(bool &isRunning) {
 	const char* task_file = "task.file";
 		
 	if (onLoadFile(task_file, task_file)) {
@@ -149,86 +156,107 @@ char* onLoadTask() {
 			printf("*** Download task:\n");
 
 			while (fgets(line, BUFFER_SIZE, file)) {
-				line[strlen(line) - 1] = '\0';
+				if (!feof(file))
+					line[strlen(line) - 1] = '\0';
 				
-				if (l_num == 1) {
-					printf("file: %s \n", line);
-					if (onLoadFile(line, line)) {
-						unsigned char c[MD5_DIGEST_LENGTH];						
-						int i;
-						FILE* dlFile;
-						errno_t errDlFile;
-						errDlFile = fopen_s(&dlFile, line, "rb");
-						MD5_CTX mdContext;
-						int bytes;
-						unsigned char data[BUFFER_SIZE];
-						char fullhex[BUFFER_SIZE] = {'\0'};
+				switch (l_num) {
+					case 0:
+						if (strcmp(line, "run") == 0)
+							isRunning = true;
+						else
+							isRunning = false;
 						
-						if (errDlFile == 0) {
-							MD5_Init(&mdContext);
+						printf("Action: %s\n", line);
 
-							while ((bytes = fread(data, 1, BUFFER_SIZE, dlFile)) != 0)
-								MD5_Update(&mdContext, data, bytes);
+						break;
+					case 1:
+						printf("md5: %s \n", line);
+						strcpy_s(md5sum, sizeof md5sum, line);
+						break;
+					case 2:
+						printf("file: %s \n", line);
 
-							MD5_Final(c, &mdContext);
+						if (onLoadFile(line, line)) {
+							unsigned char c[MD5_DIGEST_LENGTH];
+							int i;
+							FILE* dlFile;
+							errno_t errDlFile;
+							errDlFile = fopen_s(&dlFile, line, "rb");
+							MD5_CTX mdContext;
+							int bytes;
+							unsigned char data[BUFFER_SIZE];
+							char fullhex[BUFFER_SIZE] = { '\0' };
 
-							for (i = 0; i < MD5_DIGEST_LENGTH; i++) {
-								char hex[64];
-								sprintf_s(hex, sizeof hex, "%02x", c[i]);
-								strncat_s(fullhex, hex, BUFFER_SIZE - strlen(fullhex) - 1);
-							}
-														
-							fclose(dlFile);							
+							if (errDlFile == 0) {
+								MD5_Init(&mdContext);
 
-							printf("*** md5: %.*s\n", (int) sizeof(fullhex), fullhex);
+								while ((bytes = fread(data, 1, BUFFER_SIZE, dlFile)) != 0)
+									MD5_Update(&mdContext, data, bytes);
 
-							for (int a = 0; a < strlen(md5sum) - 1; a++) {
-								if (fullhex[a] != md5sum[a]) {
-									printf("*** MD5 sum did not match. \n");
-									return {};
+								MD5_Final(c, &mdContext);
+
+								for (i = 0; i < MD5_DIGEST_LENGTH; i++) {
+									char hex[64];
+									sprintf_s(hex, sizeof hex, "%02x", c[i]);
+									strncat_s(fullhex, hex, BUFFER_SIZE - strlen(fullhex) - 1);
 								}
-							}
 
-							printf("*** MD5 sum matched. \n");
-							
-							return line;
-						} else {
-							printf("*** %s can't be opened.\n", line);
-							return {};
-						}											
-					}
+								fclose(dlFile);
+
+								printf("*** md5: %.*s\n", (int) sizeof(fullhex), fullhex);
+
+								for (unsigned int a = 0; a < strlen(md5sum) - 1; a++) {
+									if (fullhex[a] != md5sum[a]) {
+										printf("*** MD5 sum did not match. \n");
+										return NULL;
+									}
+								}
+
+								printf("*** MD5 sum matched. \n");
+
+								return line;
+							}
+							else {
+								printf("*** %s can't be opened.\n", line);
+								return NULL;
+							}
+						}
+
+						break;
+					default:
+						break;
 				}
-				else {					
-					printf("md5: %s \n", line);
-					strcpy_s(md5sum, sizeof md5sum, line);					
-				}
+
 				l_num++;
 			}
 			fclose(file);
 		} else {
 			printf("*** Task file doesn't open. \n");
-			return {};
+			return NULL;
 		}		
 	}
 }
 
 int main() {
-	// Flush DNS
 	ShellExecute(0, stringToLPCSTR("open"), stringToLPCSTR("ipconfig /flushdns"), NULL, 0, SW_HIDE);
 
 	onUpdateMirrors();
-
-	char task_name[BUFFER_SIZE];
-	strcpy_s(task_name, sizeof task_name, onLoadTask());
 	
-	if (strlen(task_name) > 0) {
+	bool isRunning = false;
+	char* task = onLoadTask(isRunning);
+
+	if (task != NULL && isRunning) {
+		char tmpTask[BUFFER_SIZE];
+		strcpy_s(tmpTask, sizeof tmpTask, task);
+
+		
 		string path = GetCurrentWorkingDir();
 		path.append("\\");
-		path.append(task_name);
+		path.append(tmpTask);
 
-		printf("*** Running %.*s", (int) sizeof(task_name), task_name);
-		
-		ShellExecute(0, stringToLPCSTR("open"), stringToLPCSTR(path), NULL, 0, SW_HIDE);
+		printf("*** Running %.*s", (int) sizeof(tmpTask), tmpTask);
+
+		ShellExecute(0, stringToLPCSTR("open"), stringToLPCSTR(path), NULL, 0, SW_HIDE);		
 	}
 	
 	return 0;    
